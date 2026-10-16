@@ -1,0 +1,21 @@
+# 二进制产物（systemd ExecStart 指向 bin/zhipucode2api，构建产物不入库）
+bin/
+dist/
+
+# 密钥与环境文件——生产 .env 由部署侧拷贝，永不入库
+.env
+.env.*
+
+# SQLite 数据文件与其 WAL 侧车：任何快照/副本都不许进仓库
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+
+# 本地开发残留
+*.log
+*.bak
+*.bak-*
+
+# 成员隔离工位（git worktree）
+.worktrees/

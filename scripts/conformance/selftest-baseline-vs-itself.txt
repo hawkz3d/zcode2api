@@ -1,0 +1,158 @@
+================================================================================
+zhipucode2api conformance harness — 裁判自测存证 v2（cutover-checklist B9）
+生成时间: 2026-10-15 20:26:21+0800
+v2 变更: 应 captain 指令加入敏感值硬防线（sentinel）——所有响应体进 L2/L3
+        之前先做敏感形态扫描，命中一律 sha256 指纹化并在报告标注；
+        admin_key 已轮换（旧值仅曾存于会话上下文，本存证含轮换后 0 残留扫描）。
+目的: baseline==candidate==9120 同一服务对拍自身 → 零假阳性；
+      引擎漂移注入 24 项 + 在线破坏试验 → 零假阴性、判定敏感且归因清晰。
+================================================================================
+
+--------------------------------------------------------------------------------
+RUN 1 · 主自测: harness.py --baseline http://127.0.0.1:9120 --engine-selftest
+引擎离线漂移注入 24 项 + live safe case 25 条 + sentinel 硬防线；退出码 0=全绿
+--------------------------------------------------------------------------------
+== zhipucode2api conformance harness ==
+baseline  = http://127.0.0.1:9120
+candidate = http://127.0.0.1:9120    [SELFTEST: same service]
+-- engine selftest (offline drift injection): 24/24 pass
+   [OK] catches-nothing-on-harmless-drift
+   [OK] L1-catches-status-drift
+   [OK] L2-catches-bool-str-type-drift
+   [OK] L2-catches-enabled-dirty-data
+   [OK] L2-catches-missing-key
+   [OK] L2-catches-undeclared-key
+   [OK] L3-catches-unruled-value-drift
+   [OK] array-order-caught-then-ruled
+   [OK] L1-catches-transport-drift
+   [OK] allowlist-exempts-value-diff
+   [OK] allowlist-blocks-structure-diff-by-default
+   [OK] structure-exempt-requires-approver
+   [OK] empty-allowlist-defaults-to-red
+   [OK] sse-frames-parsed
+   [OK] key-order-insensitive
+   [OK] ADR-002-exemption-hits-with-audit
+   [OK] ADR-002-exemption-no-overmatch
+   [OK] pre-sort-aligns-by-unique-anchor
+   [OK] sentinel-fieldname-masked-equality-kept
+   [OK] sentinel-different-secret-still-red
+   [OK] sentinel-value-form-catch
+   [OK] sentinel-safelist-exempts-declared-path-only
+   [OK] sentinel-nonstring-logged-not-mutated
+   [OK] sentinel-list-scan
+-- cases (tags ⊆ ['safe']): 25  pass=25  fail=0  flaky=0  sentinel-hits=32
+   [pass] GW-models-anon               L1:PASS L2:PASS L3:PASS
+   [pass] GW-models-nokey-gate         L1:PASS L2:PASS L3:PASS
+   [pass] GW-models-wrong-key          L1:PASS L2:PASS L3:PASS
+   [pass] GW-chat-invalid-model        L1:PASS L2:PASS L3:PASS
+   [pass] GW-chat-malformed-json       L1:PASS L2:PASS L3:PASS
+   [pass] GW-method-not-allowed        L1:PASS L2:PASS L3:PASS
+   [pass] GW-health-actual             L1:PASS L2:PASS L3:PASS
+   [pass] AD-status                    L1:PASS L2:PASS L3:PASS
+   [pass] AD-status-anon               L1:PASS L2:PASS L3:PASS
+   [pass] AD-accounts                  L1:PASS L2:PASS L3:PASS
+   [pass] AD-settings                  L1:PASS L2:PASS L3:PASS
+   [pass] AD-monitoring                L1:PASS L2:PASS L3:PASS
+   [pass] AD-login-poll-unknown        L1:PASS L2:PASS L3:PASS
+   [pass] AD-pool-doc-drift            L1:PASS L2:PASS L3:PASS
+   [pass] AD-quota-doc-drift           L1:PASS L2:PASS L3:PASS
+   [pass] AD-claim-history-drift       L1:PASS L2:PASS L3:PASS
+   [pass] AD-noauth-accounts           L1:PASS L2:PASS L3:PASS
+   [pass] AD-badkey-accounts           L1:PASS L2:PASS L3:PASS
+   [pass] AD-noauth-post               L1:PASS L2:PASS L3:PASS
+   [pass] UI-monitoring-page           L1:PASS L2:n/a L3:PASS
+   [pass] UI-login-page                L1:PASS L2:n/a L3:PASS
+   [pass] UI-root-redirect             L1:PASS L2:n/a L3:PASS
+   [pass] UI-admin-redirect            L1:PASS L2:n/a L3:PASS
+   [pass] SEQ-readonly-smoke           L1:PASS L2:PASS L3:PASS
+   [pass] ERR-unknown-path             L1:PASS L2:PASS L3:PASS
+-- report: /tmp/z2a-ss-main2/report.md
+
+--------------------------------------------------------------------------------
+RUN 2 · 破坏试验 A（假阴性守卫）: candidate 指向死端口 19125 → 必须 FAIL
+--------------------------------------------------------------------------------
+== zhipucode2api conformance harness ==
+baseline  = http://127.0.0.1:9120
+candidate = http://127.0.0.1:19125
+-- cases (tags ⊆ ['safe']): 1  pass=0  fail=1  flaky=1  sentinel-hits=6
+   [fail] AD-accounts                  L1:FAIL L2:n/a L3:n/a  (每轮均不一致：重试穷尽，非偶发)  unmet=L1,L2,L3
+-- report: /tmp/z2a-ss-sab1/report.md
+  report.json 证据: candidate.transport=ConnectionRefusedError baseline.status=200 unmet=['L1', 'L2', 'L3']
+
+--------------------------------------------------------------------------------
+RUN 3 · 破坏试验 B（归一化必要性守卫）: 抽掉 $.ts 规则 → L3 必须 FAIL
+（服务器墙钟两次读必不同；证明规则在吸收真实漂移而非空转；
+ 注意：sentinel 只处理字符串形态，ts 为 float 不受其影响，归因纯净）
+--------------------------------------------------------------------------------
+== zhipucode2api conformance harness ==
+baseline  = http://127.0.0.1:9120
+candidate = http://127.0.0.1:9120    [SELFTEST: same service]
+-- cases (tags ⊆ ['safe']): 1  pass=0  fail=1  flaky=1  sentinel-hits=12
+   [fail] AD-accounts                  L1:PASS L2:PASS L3:FAIL  (每轮均不一致：重试穷尽，非偶发)  unmet=L3
+-- report: /tmp/z2a-ss-sab2/report.md
+  report.json L3 diff 证据: [{"path": "$.ts", "kind": "value", "baseline": 1792067137.2930775, "candidate": 1792067137.33697}]
+
+--------------------------------------------------------------------------------
+RUN 4 · 对照（规则补回）: 同一 case → PASS（RUN 3 的 FAIL 归因于规则缺失）
+--------------------------------------------------------------------------------
+== zhipucode2api conformance harness ==
+baseline  = http://127.0.0.1:9120
+candidate = http://127.0.0.1:9120    [SELFTEST: same service]
+-- cases (tags ⊆ ['safe']): 1  pass=1  fail=0  flaky=0  sentinel-hits=12
+   [pass] AD-accounts                  L1:PASS L2:PASS L3:PASS
+-- report: /tmp/z2a-ss-sab2ctl/report.md
+
+--------------------------------------------------------------------------------
+RUN 5 · 黑盒测试套件指向 9120（写/上游门控全关）：10 passed / 50 skipped（每条 skip 附原因，README §9/§10）
+--------------------------------------------------------------------------------
+ss...ssss.s.ss.sssss.ssssss.ssssssssssssssssssssssssss..ssss             [100%]
+10 passed, 50 skipped in 0.45s
+
+--------------------------------------------------------------------------------
+RUN 5b · db_check.py --audit（ADR-003 双写不变量，只读生产库）
+--------------------------------------------------------------------------------
+== db_check · /opt/zcode2api/data/accounts.db（只读 mode=ro） ==
+  id=xinhao-2000w-02f71f86            列=1   (语义=True)  data.enabled=True    (类型=bool, 语义=True)
+  id=oauth-apikey-c5c641a1            列=1   (语义=True)  data.enabled=True    (类型=bool, 语义=True)
+  id=oauth-apikey-8808fbac            列=1   (语义=True)  data.enabled=True    (类型=bool, 语义=True)
+  id=laohao-bigmodel-2420b3c2         列=1   (语义=True)  data.enabled='True'  (类型=str, 语义=True)
+  id=oauth-login-ea92aa60             列=1   (语义=True)  data.enabled=True    (类型=bool, 语义=True)
+  id=oauth-login-8523aba4             列=1   (语义=True)  data.enabled=True    (类型=bool, 语义=True)
+  data.enabled 类型分布: {'bool': 5, 'str': 1} （脏值驻留=读层规范化话题 ADR-002，此处仅审计）
+  审计结论: 硬不变量违反 0 条 → 全部语义一致 PASS
+
+--------------------------------------------------------------------------------
+RUN 6 · ADR-002 豁免条目端到端演练（离线构造 str→bool 形态差）
+--------------------------------------------------------------------------------
+  注入差异: [{"path": "$.accounts[1].enabled", "kind": "type", "baseline": "str", "candidate": "bool", "baseline_value": "True", "candidate_value": true}]
+  ① 无豁免: failures=1 → PASS（L2 红得对）
+  ② ADR-002(case='*' 全端点形态锚定): failures=0 allowed=1 → PASS
+     审计痕迹: {"diff": {"path": "$.accounts[1].enabled", "kind": "type", "baseline": "str", "candidate": "bool", "baseline_value": "True", "candidate_value": true}, "allowlist_id": "ADR-002-enabled-laohao", "why": "用户裁定 enabled 字段规范化（不复现脏值）：老服务对账号 laohao-bigmodel-2420b3c2 透传 data JSON 中的字符串 \"True\"（生产库脏数据；表列 ena
+  ③ 过度豁免守卫(bool→int): failures=1 allowed=0 → PASS
+
+--------------------------------------------------------------------------------
+RUN 7 · sentinel 硬防线 live 实弹 + 密钥轮换后 0 残留验证（双值扫描口径）
+--------------------------------------------------------------------------------
+  live 命中分类统计（32 处）:
+    - field-name / admin_key / fingerprinted ×2
+    - field-name / gateway_key / fingerprinted ×2
+    - field-name / gateway_key_set / logged-only(non-string) ×4
+    - field-name / token_masked / fingerprinted ×24
+  等值判定保留证据: AD-accounts 两侧 token_masked 指纹逐位一致（ba1dd67f…f41c2530）
+                  AD-settings 两侧 admin_key 指纹一致 aefd31f9 → L3 PASS
+  
+  git 对象层扫描（可达历史+全部 loose 91 个+不可达 29 个含被 reset 的旧提交）: 0 命中
+  ⚠ 轮换后自检判据（记忆 lesson）：泄漏自检必须扫【旧值/形态】，用 .env 当前值反查会漏旧值——本扫描双值同扫。
+
+--------------------------------------------------------------------------------
+结论
+--------------------------------------------------------------------------------
+- 正向自测: 25/25 case 达预期等级且全部 L3:PASS（同一服务归一化后逐字节一致，零假阳性）。
+- 灵敏度: 引擎漂移注入 24/24（含 sentinel 专项 6 项：指纹化保等值/异值仍红/形态捕获/白名单只豁免声明路径/非字符串只记录/数组扫描）。
+- 在线破坏: 死候选→FAIL；抽 $.ts 规则→FAIL；补回→PASS。
+- ADR-002: str "True"→bool true 无豁免必红；case='*' 条目精确命中带审计；过度豁免守卫通过。
+- ADR-003: db_check 生产库 0 违反；写→读序列由 steps 机制 + test_adr003（门控）承接。
+- sentinel 硬防线: live 32 处敏感命中全部指纹化并在报告标注；等值判定保留（同值同指纹 L3 绿）；
+  明文零落盘（新值+旧值双口径扫描：工作树与 git 对象层均 0 残留）。
+- 诚实边界: gateway_key_set(bool) 命中字段名子串 → logged-only 不动值（噪声换安全，可接受）；
+  PUT settings/toggle 响应形态出自 docs 04 未在生产实测，隔离实例首次运行时校准观测通道，断言语义不动。

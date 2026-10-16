@@ -1,0 +1,126 @@
+================================================================================
+t10 · DOM 结构等价验证器 —— 防假绿自测存证（Liche · 2026-10-15 21:48:27+0800）
+================================================================================
+
+本文件三条管线缺一不可：正向自测（防假阳性）+ 漂移注入（防假阴性）
++ 口径三方对账（防『两边各说各话』）。验证器是 t9 验收判据，它自己先要可信。
+
+--------------------------------------------------------------------------------
+RUN 1 · 引擎自测 35 项（既有 24 项零回归 + DOM 11 项防假绿）
+  python3 harness.py --engine-selftest --filter __nomatch__
+  关键项：dom-self-identical=防假阳性；dom-catch-*=防假阴性（删id/改class/
+  改文本/删节点/资源版本串/JS 模板改动逐一必报）；dom-ignore-whitespace-
+  comment-attrorder=ADR-006 允许差异清单生效（防过度严格误报）；
+  dom-requires-check-gate=豁免≠放行三态；requires-check-not-a-waiver=
+  防门条目反向充当 diff 豁免。
+--------------------------------------------------------------------------------
+-- engine selftest (offline drift injection): 35/35 pass
+   [OK] catches-nothing-on-harmless-drift
+   [OK] L1-catches-status-drift
+   [OK] L2-catches-bool-str-type-drift
+   [OK] L2-catches-enabled-dirty-data
+   [OK] L2-catches-missing-key
+   [OK] L2-catches-undeclared-key
+   [OK] L3-catches-unruled-value-drift
+   [OK] array-order-caught-then-ruled
+   [OK] L1-catches-transport-drift
+   [OK] allowlist-exempts-value-diff
+   [OK] allowlist-blocks-structure-diff-by-default
+   [OK] structure-exempt-requires-approver
+   [OK] empty-allowlist-defaults-to-red
+   [OK] sse-frames-parsed
+   [OK] key-order-insensitive
+   [OK] ADR-002-exemption-hits-with-audit
+   [OK] ADR-002-exemption-no-overmatch
+   [OK] pre-sort-aligns-by-unique-anchor
+   [OK] sentinel-fieldname-masked-equality-kept
+   [OK] sentinel-different-secret-still-red
+   [OK] sentinel-value-form-catch
+   [OK] sentinel-safelist-exempts-declared-path-only
+   [OK] sentinel-nonstring-logged-not-mutated
+   [OK] sentinel-list-scan
+   [OK] dom-self-identical
+   [OK] dom-catch-missing-id
+   [OK] dom-catch-class-change
+   [OK] dom-catch-text-change
+   [OK] dom-ignore-whitespace-comment-attrorder
+   [OK] dom-catch-resource-version
+   [OK] dom-catch-node-removed
+   [OK] dom-catch-js-template-text
+   [OK] dom-requires-check-gate
+   [OK] requires-check-not-a-waiver
+   [OK] dom-class-multispace-normalized
+-- cases (tags ⊆ ['safe']): 0  pass=0  fail=0  flaky=0  sentinel-hits=0
+
+--------------------------------------------------------------------------------
+RUN 2 · live 回归：baseline==candidate==9120（30 safe case 全绿）
+  既有 26 case 判定语义零变化（回归证据）；4 页 ST-DOM PASS 且 L3 标 observed；
+  sentinel 32 命中全指纹化。
+--------------------------------------------------------------------------------
+-- cases (tags ⊆ ['safe']): 30  pass=30  fail=0  flaky=0  sentinel-hits=32
+   [pass] UI-monitoring-page           L1:PASS L2:n/a L3:PASS ST-DOM:PASS (L3-observed)
+   [pass] UI-login-page                L1:PASS L2:n/a L3:PASS ST-DOM:PASS (L3-observed)
+   [pass] UI-root-redirect             L1:PASS L2:n/a L3:PASS
+   [pass] UI-admin-redirect            L1:PASS L2:n/a L3:PASS
+   [pass] UI-accounts-page             L1:PASS L2:n/a L3:PASS ST-DOM:PASS (L3-observed)
+   [pass] UI-settings-page             L1:PASS L2:n/a L3:PASS ST-DOM:PASS (L3-observed)
+
+--------------------------------------------------------------------------------
+RUN 3 · 口径三方对账：python3 dom_crosscheck.py
+  A=模板基线(capain 正则于老仓源文件) B=live 属性 C=live 响应原文正则
+  判据：A−C=0（基线与渲染零差）∧ B−A=0（live 标签 baseline 全收录）；
+  A−B 差额须 100% 落在 <script> JS 模板片段（由 text 断言守卫）。
+--------------------------------------------------------------------------------
+baseline 目录: /opt/zhipucode2api/docs/contract/frontend-baseline
+═══ login (/admin/login) ═══
+  维度        baseline  live-attr  live-regex   归因列
+  id               1          1           1   A−B(模板片段)=0  A−C(未归因)=0  B−A(漏记)=0
+  class           12         12          12   A−B(模板片段)=0  A−C(未归因)=0  B−A(漏记)=0
+  data-*           0          0           0   A−B(模板片段)=0  A−C(未归因)=0  B−A(漏记)=0
+  资源               4          4           4   A−B(模板片段)=0  A−C(未归因)=0  B−A(漏记)=0
+
+═══ accounts (/admin/accounts) ═══
+  维度        baseline  live-attr  live-regex   归因列
+  id              43         40          43   A−B(模板片段)=3  A−C(未归因)=0  B−A(漏记)=0
+  class           98         35          98   A−B(模板片段)=63  A−C(未归因)=0  B−A(漏记)=0
+  data-*           3          1           3   A−B(模板片段)=2  A−C(未归因)=0  B−A(漏记)=0
+  资源               5          5           5   A−B(模板片段)=0  A−C(未归因)=0  B−A(漏记)=0
+  JS/动态 id 片段 3 个：${a.id}、claim-cap-btn、claim-cap-holder
+  （这些片段位于 <script> 文本 → 由 ST-DOM text 断言逐字守卫）
+
+═══ monitoring (/admin/monitoring) ═══
+  维度        baseline  live-attr  live-regex   归因列
+  id              27         27          27   A−B(模板片段)=0  A−C(未归因)=0  B−A(漏记)=0
+  class           51         26          51   A−B(模板片段)=25  A−C(未归因)=0  B−A(漏记)=0
+  data-*           2          2           2   A−B(模板片段)=0  A−C(未归因)=0  B−A(漏记)=0
+  资源               5          5           5   A−B(模板片段)=0  A−C(未归因)=0  B−A(漏记)=0
+
+═══ settings (/admin/settings) ═══
+  维度        baseline  live-attr  live-regex   归因列
+  id               5          5           5   A−B(模板片段)=0  A−C(未归因)=0  B−A(漏记)=0
+  class           11         11          11   A−B(模板片段)=0  A−C(未归因)=0  B−A(漏记)=0
+  data-*           1          1           1   A−B(模板片段)=0  A−C(未归因)=0  B−A(漏记)=0
+  资源               5          5           5   A−B(模板片段)=0  A−C(未归因)=0  B−A(漏记)=0
+
+══ 结论：全部三方差异可归因 ✓（模板片段由 text 断言守卫，属性口径零未归因差异） ══
+
+================================================================================
+结论
+================================================================================
+- 自对自：dom-self-identical PASS（同一份 HTML 全等价，零假阳性）。
+- 漂移注入：删 id / 改 class / 改可见文本 / 删节点 / 资源版本串 / JS 模板改动
+  6 类真差异全部报出（零假阴性）；空白·注释·属性序·class 多空格 4 类允许差异
+  全部不报（无误伤）——ADR-006 允许差异清单逐条生效。
+- 豁免联动：requires_check 门三态断言通过——ST-DOM 挂 ⇒ 整体 FAIL（哪怕字节
+  差异已被处理）；门条目不可反向充当 diff 豁免（requires-check-not-a-waiver）。
+- 口径对账：四页 × 4 维全零未归因。captain 模板基线的 accounts 43id/98class
+  与 live 属性口径 40id/35class 之差，全部落在 <script> JS 模板串片段（含
+  动态 ${a.id} 与 claim-cap-btn / claim-cap-holder 等 JS 运行时创建的 id，
+  及 63 个 class 片段；monitoring 25 class 片段），由 ST-DOM 的 text 断言
+  逐字守卫——【两边口径都正确，非提取 bug】。t9 验收以 ST-DOM（live 属性
+  口径 + text + 资源清单）为准。
+- 回归：live 30/30 safe 全绿（既有 26 case 判定语义零变化）、flaky=0、
+  sentinel 32 命中全指纹化；引擎合计 35/35。
+- 诚实附注：本任务开发中途发生过一次 worktree 未提交即被 remove --force 的
+  事故，全部改动已在 main 路径重建并重跑三条管线——上文全部输出为重建后的
+  【新运行】原始结果，非事故前旧输出。核心代码提交 9a08abc。
