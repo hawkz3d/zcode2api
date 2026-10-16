@@ -1,0 +1,10 @@
+{
+  "name": "captcha-solver-runtime",
+  "version": "2.0.0",
+  "description": "Runtime dependency manifest for the external captcha solver (NOT the solver source itself)",
+  "type": "commonjs",
+  "main": "solver.js",
+  "dependencies": {
+    "happy-dom": "^20.14.0"
+  }
+}

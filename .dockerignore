@@ -1,0 +1,25 @@
+# 版本控制与本地状态
+.git
+.gitignore
+.worktrees
+
+# 构建产物（镜像内重新编译，不复制宿主的）
+bin/
+*.test
+
+# 本地数据与密钥（绝不入镜像）
+data/
+.env
+*.env
+!scripts/zhipucode2api.env.example
+
+# 开发/测试产物
+scripts/conformance/latest/
+docs/taskqueue/
+**/*.bak
+**/*.bak-*
+
+# 编辑器
+.vscode/
+.idea/
+*.swp

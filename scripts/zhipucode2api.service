@@ -1,0 +1,36 @@
+# /etc/systemd/system/zhipucode2api.service
+# zhipucode2api 网关常驻托管（Go 版；取代 zcode2api.service）
+#
+# 定位：ZCode 账号运营 + billing/claim + OpenAI 兼容网关，监听 127.0.0.1:9120。
+# 与旧 unit 的差异：ExecStart 指向静态编译的 Go 二进制；无 Python venv 依赖。
+# 网络：DIRECT 直连（不设 http_proxy；NO_PROXY 含本机/内网），与旧服务同语义。
+# 日志：写在非 sticky 目录（workspace/logs）——本机 fs.protected_regular=2，
+#       会拦截 root 打开 /tmp 下属主为他人的文件（status=209/STDOUT 启动失败循环）。
+[Unit]
+Description=zhipucode2api gateway (ZCode billing/claim + OpenAI-compatible API @127.0.0.1:9120)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=appuser
+Group=appuser
+WorkingDirectory=/opt/zhipucode2api
+Environment=NO_PROXY=localhost,127.0.0.1,::1,192.168.0.0/16,10.0.0.0/8,172.16.0.0/12,zcode.z.ai,api.z.ai,open.bigmodel.cn
+Environment=no_proxy=localhost,127.0.0.1,::1,192.168.0.0/16,10.0.0.0/8,172.16.0.0/12,zcode.z.ai,api.z.ai,open.bigmodel.cn
+# ① 复用老仓 .env（密钥/节点路径的单一来源）
+#    注意：EnvironmentFile 的值【优先于】Environment=，与行序无关（captain 实测，ADR-005）
+# ── 阶段 E 解耦（2026-10-16）：状态目录独立于老仓 ──
+# 老仓归档后本 unit 仍须可用，故 .env 与 data/ 已迁至独立状态目录。
+EnvironmentFile=/opt/appdata/zcode2api-state/.env
+# ② 后加载的覆盖文件：把 ZCODE_DATA_DIR 改为绝对路径
+#    两个 EnvironmentFile 按出现顺序处理，后者覆盖前者 —— 这是覆盖老 .env 相对路径的正确手法
+EnvironmentFile=/opt/zhipucode2api/scripts/zhipucode2api.env
+ExecStart=/opt/zhipucode2api/bin/zhipucode2api serve
+Restart=always
+RestartSec=5
+StandardOutput=append:/opt/logs/zhipucode2api.log
+StandardError=append:/opt/logs/zhipucode2api.log
+
+[Install]
+WantedBy=multi-user.target

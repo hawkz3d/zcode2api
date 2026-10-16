@@ -1,0 +1,119 @@
+[
+  {
+    "path": "$.accounts",
+    "sort_by": "id",
+    "why": "【位置对齐，非顺序抹除】账号列表的【顺序本身是持久契约】（CR-35 实测：老服务顺序 = provider 分组序[zai,bigmodel]×组内created_at 升序，稳定、跨端点一致、UI 可见）——本规则【不代表顺序可漂移】。它的作用仅是把两侧对齐到同账号同位置，使单个账号的字段差异（含 enabled 脏数据类型、fingerprint、quota）在原位置准确定罪，而不因 SQL 返回顺序的细微不同错位到别的账号头上产生假阳性。顺序契约的独立断言由 case 的 order_keys/ORDER 层承担（走原始数组、不经本归一化）——排序对齐字段 + ORDER 定罪顺序，职责分离。"
+  },
+  {
+    "path": "$.ts",
+    "replace": "<server-clock>",
+    "why": "响应组装瞬间的服务器墙钟（time.time() 浮点秒）。同一服务连续两次调用必然不同（微秒级漂移），不承载任何业务状态。字段的【存在性 + float 类型】仍由 L2 在原始数据上守卫。"
+  },
+  {
+    "path": "$.accounts[*].recent_results",
+    "replace_typed": true,
+    "why": "『最近 N 次调用明细』是各服务进程自己的流量滚动历史（含每次调用的时刻、耗时、命中账号）。老服务已跑数月、新服务刚起，正式对拍时两侧内容必然不同；自测时若 cron 巡逻在两次读之间打了一次 /v1，条数也会 +1。因此这是【进程态】而非【DB 持久契约】，L3 值比对它没有意义。pre 层按类型折叠为空数组：L2 仍校验『该字段存在且为数组』，其内容正确性由黑盒测试 test_gateway_openai 单独验证（非对拍职责）。"
+  },
+  {
+    "path": "$.accounts[*].use_count",
+    "replace": "<counter>",
+    "why": "全池累计成功调用计数。老服务是被 cron 巡逻与真实用户流量持续写入的共享生产服务，两次对拍之间必然漂移。它反映的是流量史而非当前契约状态。存在性 + int 类型由 L2 守卫。"
+  },
+  {
+    "path": "$.accounts[*].fail_count",
+    "replace": "<counter>",
+    "why": "同 use_count：累计失败计数，随外部流量增长，不可复现。存在性/int 类型守卫在 L2。"
+  },
+  {
+    "path": "$.accounts[*].last_used_at",
+    "replace": "<ts>",
+    "why": "最后一次真实服务时刻（unix 秒）。任何用户/cron 流量都会推进它，两次读之间可能变化。存在性 + float|None 类型守卫在 L2。"
+  },
+  {
+    "path": "$.accounts[*].last_checked_at",
+    "replace": "<ts>",
+    "why": "quota monitor 上次检查时刻。后台错峰轮询约每 10 分钟推进一次，极易落在两次对拍读之间。类型守卫在 L2。"
+  },
+  {
+    "path": "$.accounts[*].cooling_until",
+    "replace": "<cooling-deadline>",
+    "why": "冷却到期时刻。⚠ 关键：这里归一化的只是【具体数值】，不是【是否冷却】——『null（未冷却）vs 浮点数（冷却中）』的类型差异会立即被 L2 原始数据比对抓到（见引擎自测 L2-catches-bool-str 同型断言）。业务态『是否在冷却』由 L2 守卫，具体秒数由时钟漂移决定不可复现，故 L3 只比存在与类型。"
+  },
+  {
+    "path": "$.accounts[*].last_error",
+    "regex": "\"logid\":\"[0-9a-zA-Z]+\"",
+    "with": "\"logid\":\"<upstream-logid>\"",
+    "why": "上游错误原文内嵌智谱侧 logid（含上游服务器时间戳 + 随机串），同一错误重放也不同。只抹 logid 子串，保留错误码与文案结构——错误文案的语义差异仍会暴露。"
+  },
+  {
+    "path": "$.accounts[*].last_error",
+    "regex": "\\d{14}[0-9a-f]{16,}",
+    "with": "<upstream-logid>",
+    "why": "智谱 logid 的另一种形态（裸 14 位时间戳 + hex 尾巴），同理不可复现，只抹这一子串。"
+  },
+  {
+    "path": "$.stats.calls",
+    "replace": "<counter>",
+    "why": "全池累计调用计数（全局游标），随任何流量增长，与单次端点契约无关。存在性/int 类型守卫在 L2。"
+  },
+  {
+    "path": "$.stats.fail",
+    "replace": "<counter>",
+    "why": "全池累计失败计数。同上。"
+  },
+  {
+    "path": "$.admin_key",
+    "secret": true,
+    "why": "后台管理密钥明文——绝不允许以任何形态进入报告文件。用 sha256 前 8 位指纹替代：两侧指纹相同=值一致（真一致不误判 FAIL），指纹不同=值不一致（真差异照样 FAIL，绝不因脱敏而假过）。存在性 + str 类型由 L2 守卫。"
+  },
+  {
+    "path": "$.gateway_key",
+    "secret": true,
+    "why": "网关 key 明文，同 admin_key：sha256 指纹脱敏，保留等值判定能力，杜绝密钥落盘。"
+  },
+  {
+    "path": "$.accounts[*].token_masked",
+    "secret": true,
+    "why": "脱敏后的凭证串（形如 eyJhbGci…Hbs6FU）。虽已脱敏，头尾片段仍可能推断凭证指纹，且随轮换变化；用哈希指纹比对『两侧脱敏后是否指向同一凭证』，明文与形态都不落报告。"
+  },
+  {
+    "path": "$.entries",
+    "replace_typed": true,
+    "why": "请求监控实时日志流：记录的是各进程自己承载的 gateway 流量（含 cron/用户请求的账号、耗时、preview）。正式对拍时老/新服务各有独立流量史，内容必然不同；自测时读到的是实时增长列表。这是【进程态】非持久契约。pre 层按类型折叠为空数组，L2 仍校验『monitoring 返回 entries 键且为数组』+ keep 计数；每条记录字段的正确性由黑盒测试 test_gateway_monitoring.py 单服务验证（非对拍职责）。**CR-37 修正**：本折叠只覆盖【内容/长度/顺序】三个维度——内容=进程态折叠正当；但【方向】（ts 降序新在前，UI 可见）是独立持久契约，不得随折叠丢失——顺序定罪由 AD-monitoring 的 order_keys 方向模式承担（两侧各自断言降序，不经本折叠）。类型+键存在由 L2 在折叠后的类型保持空值上仍守卫。"
+  },
+  {
+    "path": "$.choices[*].message.content",
+    "replace": "<llm-text>",
+    "why": "真实上游 LLM 生成文本不保证跨调用确定性（采样温度/上游版本漂移）。契约面（对象类型、finish_reason、usage 键结构、[DONE] 终止）由 L2 + 未归一化字段守卫。仅用于 expensive 的 /v1/* 生成端点，默认不在自测集。"
+  },
+  {
+    "path": "$.id",
+    "replace": "<resp-id>",
+    "why": "OpenAI 风格响应 id（chatcmpl-xxxx），上游随机。仅服务 expensive 端点。"
+  },
+  {
+    "path": "$.created",
+    "replace": "<ts>",
+    "why": "OpenAI 风格响应秒级时间戳。仅服务 expensive 端点。"
+  },
+  {
+    "path": "$.__sse_frames__[*].id",
+    "replace": "<chunk-id>",
+    "why": "SSE 分片响应 id 上游随机。仅 expensive 流式端点。"
+  },
+  {
+    "path": "$.__sse_frames__[*].created",
+    "replace": "<ts>",
+    "why": "SSE 分片秒级时间戳。仅 expensive 流式端点。"
+  },
+  {
+    "path": "$.__sse_frames__[*].choices[*].delta.content",
+    "replace": "<llm-text>",
+    "why": "SSE 流式生成文本非确定。帧序、object 类型、finish_reason、[DONE] 终止符仍逐项守卫。仅 expensive 流式端点。"
+  },
+  {
+    "path": "$.exported_at",
+    "replace": "<exported-at>",
+    "why": "B-19 export 响应的墙钟时间戳（服务器落盘时刻），与 $.ts 同理：同服务连续两次调用必然不同且无契约语义。version/结构仍逐值对拍。"
+  }
+]

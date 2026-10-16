@@ -1,0 +1,141 @@
+================================================================================
+t13 验收准备 · 工作A+B 证据（Liche）
+================================================================================
+
+## RUN 1 · 引擎自测（既有项零回归 + 新机制哨兵）
+-- engine selftest (offline drift injection): 49/49 pass
+   [OK] catches-nothing-on-harmless-drift
+   [OK] L1-catches-status-drift
+   [OK] L2-catches-bool-str-type-drift
+   [OK] L2-catches-enabled-dirty-data
+   [OK] L2-catches-missing-key
+   [OK] L2-catches-undeclared-key
+   [OK] L3-catches-unruled-value-drift
+   [OK] array-order-caught-then-ruled
+   [OK] L1-catches-transport-drift
+   [OK] allowlist-exempts-value-diff
+   [OK] allowlist-blocks-structure-diff-by-default
+   [OK] structure-exempt-requires-approver
+   [OK] empty-allowlist-defaults-to-red
+   [OK] sse-frames-parsed
+   [OK] key-order-insensitive
+   [OK] ADR-002-exemption-hits-with-audit
+   [OK] ADR-002-exemption-no-overmatch
+   [OK] pre-sort-aligns-by-unique-anchor
+   [OK] sentinel-fieldname-masked-equality-kept
+   [OK] sentinel-different-secret-still-red
+   [OK] sentinel-value-form-catch
+   [OK] sentinel-safelist-exempts-declared-path-only
+   [OK] sentinel-nonstring-logged-not-mutated
+   [OK] sentinel-list-scan
+   [OK] dom-self-identical
+   [OK] dom-catch-missing-id
+   [OK] dom-catch-class-change
+   [OK] dom-catch-text-change
+   [OK] dom-ignore-whitespace-comment-attrorder
+   [OK] dom-catch-resource-version
+   [OK] dom-catch-node-removed
+   [OK] dom-catch-js-template-text
+   [OK] dom-requires-check-gate
+   [OK] requires-check-not-a-waiver
+   [OK] dom-class-multispace-normalized
+   [OK] order-identical-pass
+   [OK] order-catches-reorder-despite-sort
+   [OK] order-absent-path-fails-not-passes
+   [OK] order-direction-passes-on-different-content-same-direction
+   [OK] order-direction-catches-reversed-candidate
+   [OK] order-empty-both-sides-visible-skip
+   [OK] order-one-side-empty-is-defect-fail
+   [OK] capture-interpolation-per-side
+   [OK] capture-undefined-var-hard-fails
+   [OK] capture-extraction-per-side
+   [OK] assert-find-by-id-catches-missing
+   [OK] assert-eq-catches-value
+   [OK] order-nested-direction-modes
+   [OK] missing-env-placeholder-hard-fails-before-send
+
+## RUN 2 · live safe 全量 40 case（含 10 个新增管理端点案）
+  pass=40 fail=0 flaky=0 sentinel-hits=44（含 AD-export 6×2 secret 指纹化）
+   [pass] GW-models-anon
+   [pass] GW-models-nokey-gate
+   [pass] GW-models-wrong-key
+   [pass] GW-chat-invalid-model
+   [pass] GW-chat-malformed-json
+   [pass] GW-method-not-allowed
+   [pass] GW-health-actual
+   [pass] AD-status
+   [pass] AD-status-anon
+   [pass] AD-accounts ORDER:PASS
+   [pass] AD-settings
+   [pass] AD-monitoring ORDER:n/a(no-sample)
+   [pass] AD-login-poll-unknown
+   [pass] AD-pool-doc-drift
+   [pass] AD-quota-doc-drift
+   [pass] AD-claim-history-drift
+   [pass] AD-noauth-accounts
+   [pass] AD-badkey-accounts
+   [pass] AD-noauth-post
+   [pass] UI-monitoring-page
+   [pass] UI-login-page
+   [pass] UI-root-redirect
+   [pass] UI-admin-redirect
+   [pass] SEQ-readonly-smoke
+   [pass] ERR-unknown-path
+   [pass] GW-messages-nonobj
+   [pass] GW-chat-nonobj
+   [pass] GW-messages-badjson
+   [pass] UI-accounts-page
+   [pass] UI-settings-page
+   [pass] AD-verify
+   [pass] AD-verify-anon
+   [pass] AD-captcha-config
+   [pass] AD-export
+   [pass] AD-delete-unknown
+   [pass] AD-put-unknown
+   [pass] AD-toggle-unknown
+   [pass] AD-rotate-unknown
+   [pass] AD-manualclaim-missing
+   [pass] AD-import-empty
+
+## RUN 3 · lifecycle 实弹三阶段（机制真实有效的最强证明）
+  3a. 首发 FAIL（自己的哨兵抓住设计缺陷）：
+      verdict=fail L1=True ASSERT=False
+      首条 fail: {'f': 'baseline: {"path": "$.accounts", "find_by_id": "{{ID}}", "field": "enabled", "eq": true} → 不成立(实得 array)', 'step': 'read-visible'}
+      根因：同服务自比两侧同 token 建号 → 第二侧去重 count:0 → ids[0] capture 失败。
+      修复：{{SIDE}} 每侧自动变量（非归一化豁免，是让假数据真正可建的正当修复）。
+  3b. 修复后 PASS：
+      verdict=pass L1=True ASSERT=True（L3=FAIL 属预期：随机 id 跨侧不可比，expect=L1+ASSERT 不判）
+      9 步全链过：建→读(visible)→停→读(off ⇒ ADR-003 双写黑盒实证)→改名→读→rotate→删→读(gone)
+  3c. 残留检查：accounts=6，liche-lc* 零残留 ✓（独立 curl 复测）
+
+## RUN 4 · 本轮最大发现：『一致地错』假绿事故（status-pin 的诞生证据）
+  worktree 中 env 相对路径解析不到 zcode2api/.env → expand 把 ${ZCODE_ADMIN_KEY}
+  吞成空串 → 两侧一致 401 → 旧 L1(相等)/L2/L3(同体) 全绿，仅 ORDER 报警。
+  三重治本：① expand 缺键保留占位符 + execute 发送前守卫硬 FAIL（哨兵24）；
+  ② status 绝对锚：两侧各自等于契约实测码才绿——GW-models 三条首 pin 我凭印象
+     写 401，被 L1 detail 的实测 200 当场纠正（gateway_key 未配置=放行语义），
+     CR-36 判据在自家新代码上再次奏效；③ env 文件向上搜索（worktree 通用）。
+
+## 覆盖矩阵结论
+  B-01..B-22 全部归位：41 safe（含 10 新案：verify×2/captcha-config/export/负型×6）
+  + mutating 门内 lifecycle/settings-put/login-start-poll/monitoring-clear
+  + expensive 门内 refresh×2/preview/claim 成功形态由黑盒 INT 主责（理由见 README §10B 分工边界）。
+  工作B：recent_results 方向入 AD-accounts ORDER 双 spec（生产 6/6 升序实测，G-14 [-1]=最新）
+  → CR-38 三处容器级（accounts 序/entries 方向/recent_results 方向）全部有独立顺序断言。
+
+## RUN 5 · ASSERT 层复核（captain 指派，发现 5 处并全堵）
+  复核方法：用审别人的敌意审自己上轮刚写的代码（谓词逐条问"两侧各以什么错法
+  能同过这条"）。发现与处置：
+  ① eq 泛比较放行 Python True==1 → candidate 把 1 写成 true 假绿。
+     治：eq_strict（bool 与数字永不互判）；哨兵 assert-eq-strict-bool-vs-int：
+       {count:true} eq 1 → 红 ✓；{count:1} eq 1 → 绿 ✓；{count:true} eq true → 绿 ✓
+  ② 共享数据源（Go 误连生产库）时 lifecycle 两侧各自看对侧假号而全绿。
+     治：find_by_prefix_missing({{OTHER}} 前缀) + 自动变量 SAME_SOURCE；
+       同源自比如实 skip（unless_shared_source，承认无证据非伪造绿——
+       本轮 lifecycle 自测报告里该探测即显示 skip，属预期）；跨服务强制生效。
+     哨兵 assert-shared-source-contamination-detect：污染红/干净绿/同源 skip 三态 ✓
+  ③ asserts:[] 空清单静默跳过 = 伪装已覆盖。治：键存在即判，空清单红。
+  ④ mutating 重试重放写序列 → 二次 create 去重漂移 + 失败留残留。
+     治：mutating 强制 retries=0。实证：本轮 lifecycle flaky=0（上轮曾 flaky=1）。
+  ⑤ 谓词值全部有实测来源标注（含 GW-models pin 凭印象被实测纠正的反面留痕）。
+  回归：引擎 51/51；live safe 41/41；lifecycle 实弹 PASS + 残留零（独立 curl 复测）。

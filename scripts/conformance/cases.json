@@ -1,0 +1,1145 @@
+{
+ "headers_compared": [
+  "content-type",
+  "location"
+ ],
+ "_note": "headers_compared 只含 content-type 与 location。不比 server（uvicorn vs net/http 是实现框架指纹，非接口契约）、不比 date（每次响应必不同）、不比 transfer-encoding（HTTP 库分块策略属实现）。如需收紧，改本数组即可，harness 无硬编码。",
+ "cases": [
+  {
+   "id": "GW-models-anon",
+   "method": "GET",
+   "path": "/v1/models",
+   "tags": [
+    "safe",
+    "gateway",
+    "read"
+   ],
+   "expect": "L1+L2+L3",
+   "note": "网关匿名可达（生产 gateway_key 未配置=放行，实测 200）。静态清单含 created_at 常量。契约锁定：models 清单内容 + 键序无关性。｜status pin 200 依据=生产 gateway_key 未配置的实测放行语义（t13 准备期 L1 detail 复测钉死；若配置网关 key，本 pin 需按契约 401 分支改 list [200,401] 并在隔离实例验证）。",
+   "status": 200
+  },
+  {
+   "id": "GW-models-nokey-gate",
+   "method": "GET",
+   "path": "/v1/models",
+   "headers": {
+    "X-Probe": "1"
+   },
+   "tags": [
+    "safe",
+    "gateway",
+    "read"
+   ],
+   "expect": "L1+L2+L3",
+   "note": "与 GW-models-anon 同请求重复发：若两读不一致说明服务态不稳定，裁判先于对拍暴露它。｜status pin 200 依据=生产 gateway_key 未配置的实测放行语义（t13 准备期 L1 detail 复测钉死；若配置网关 key，本 pin 需按契约 401 分支改 list [200,401] 并在隔离实例验证）。",
+   "status": 200
+  },
+  {
+   "id": "GW-models-wrong-key",
+   "method": "GET",
+   "path": "/v1/models",
+   "headers": {
+    "Authorization": "Bearer sk-not-configured-0000"
+   },
+   "tags": [
+    "safe",
+    "gateway",
+    "negative"
+   ],
+   "expect": "L1+L2+L3",
+   "note": "gateway_key 未配置时错误 key 也应放行（放行语义=不校验）。若 candidate 实现了『配置了才校验』则与此一致；不一致即契约差异。｜status pin 200 依据=生产 gateway_key 未配置的实测放行语义（t13 准备期 L1 detail 复测钉死；若配置网关 key，本 pin 需按契约 401 分支改 list [200,401] 并在隔离实例验证）。",
+   "status": 200
+  },
+  {
+   "id": "GW-chat-invalid-model",
+   "method": "POST",
+   "path": "/v1/chat/completions",
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "json": {
+    "messages": [
+     {
+      "role": "user",
+      "content": "hi"
+     }
+    ]
+   },
+   "tags": [
+    "safe",
+    "gateway",
+    "negative",
+    "validation"
+   ],
+   "expect": "L1+L2+L3",
+   "note": "缺 model → 400 {error:{message,type=invalid_request_error}}。网关校验层，零上游流量。中文错误文案是契约（必须逐字一致）。",
+   "status": 400
+  },
+  {
+   "id": "GW-chat-malformed-json",
+   "method": "POST",
+   "path": "/v1/chat/completions",
+   "raw_body": "{\"model\": \"glm-5.3\"",
+   "tags": [
+    "safe",
+    "gateway",
+    "negative"
+   ],
+   "expect": "L1+L2+L3",
+   "note": "残缺 JSON → 老服务实测 400/422（对拍时定案）。框架默认错误形态（FastAPI detail vs Go 手写）是最易漂移点，必须锚死。",
+   "status": 400
+  },
+  {
+   "id": "GW-method-not-allowed",
+   "method": "POST",
+   "path": "/v1/models",
+   "tags": [
+    "safe",
+    "gateway",
+    "negative"
+   ],
+   "expect": "L1+L2+L3",
+   "note": "GET-only 端点打 POST → 405 形态（FastAPI {\"detail\":\"Method Not Allowed\"}）。",
+   "status": 405
+  },
+  {
+   "id": "GW-health-actual",
+   "method": "GET",
+   "path": "/health",
+   "tags": [
+    "safe",
+    "read",
+    "drift-anchor"
+   ],
+   "expect": "L1+L2+L3",
+   "note": "⚠ 文档 04-api-spec §1.5 说存在 /health，实测 404。契约以运行事实为准：candidate 也必须 404（除非文档修实）。此 case 是『文档-实现漂移』锚点。",
+   "status": 404
+  },
+  {
+   "id": "AD-status",
+   "method": "GET",
+   "path": "/admin/api/status",
+   "headers": {
+    "Authorization": "Bearer ${ZCODE_ADMIN_KEY}"
+   },
+   "tags": [
+    "safe",
+    "admin",
+    "read"
+   ],
+   "expect": "L1+L2+L3",
+   "note": "providers/gateway_key_set/quota_pool 计数。quota_pool 是池规模（队友加/删账号会动它）→ 外部写风险由 FLAKY 重试处置。",
+   "status": 200
+  },
+  {
+   "id": "AD-status-anon",
+   "method": "GET",
+   "path": "/admin/api/status",
+   "tags": [
+    "safe",
+    "admin",
+    "negative"
+   ],
+   "expect": "L1+L2+L3",
+   "note": "实测：status 匿名可达（200）。该豁免行为是契约（无论有意与否），candidate 必须复刻。",
+   "status": 401
+  },
+  {
+   "id": "AD-accounts",
+   "method": "GET",
+   "path": "/admin/api/accounts",
+   "headers": {
+    "Authorization": "Bearer ${ZCODE_ADMIN_KEY}"
+   },
+   "tags": [
+    "safe",
+    "admin",
+    "read"
+   ],
+   "expect": "L1+L2+L3+ORDER",
+   "note": "CR-35 顺序是持久契约：ORDER 断言（原始数组逐位比 id 序列，不经归一化/pre-sort）守卫 store.go ORDER BY rowid 与老服务(provider分组,created_at升序) 不一致时对拍洗绿的盲区。sort_by:id 仍保留做位置对齐（字段差异不错位）——两职责分离。对拍核心 case：全池账号（DB 持久数据）。归一化只覆盖时钟/计数/进程史（recent_results/entries 折叠、use_count 等），enabled 的 bool vs str 脏数据【无规则】→ L2 逐账号逐位置类型树守卫。fingerprint/quota/subscription/plan 等 DB 字段必须 L3 全同（两服务读同一 accounts.db）。 嵌套方向（CR-16b/工作B）：每账号 recent_results 的 at 序列升序（[-1] 最新，G-14 更正后口径）——replace_typed 折叠内容后顺序维度由 ORDER 嵌套模式守卫；空数组（新账号无历史）=合法零样本。",
+   "order_keys": [
+    {
+     "path": "$.accounts",
+     "by": "id"
+    },
+    {
+     "path": "$.accounts[*].recent_results",
+     "by": "at",
+     "direction": "asc"
+    }
+   ],
+   "status": 200
+  },
+  {
+   "id": "AD-settings",
+   "method": "GET",
+   "path": "/admin/api/settings",
+   "headers": {
+    "Authorization": "Bearer ${ZCODE_ADMIN_KEY}"
+   },
+   "tags": [
+    "safe",
+    "admin",
+    "read",
+    "secret-bearing"
+   ],
+   "expect": "L1+L2+L3",
+   "note": "响应含 admin_key 明文——由 secret 规则以 sha256 指纹替代后比对（等值能力保留，明文不落报告）。",
+   "status": 200
+  },
+  {
+   "id": "AD-monitoring",
+   "method": "GET",
+   "path": "/admin/api/monitoring",
+   "headers": {
+    "Authorization": "Bearer ${ZCODE_ADMIN_KEY}"
+   },
+   "tags": [
+    "safe",
+    "admin",
+    "read",
+    "volatile"
+   ],
+   "expect": "L1+L2+ORDER",
+   "note": "CR-37：entries 内容=进程态（replace_typed 折叠正当），但【方向】是与内容无关的持久契约——实测 ts 严格降序（新在前）、连查稳定、UI 首行=最新（forEach+slice 渲染）。ORDER 用方向模式：两侧各自独立断言降序（内容必然不同，相等无意义）。空数组=无样本→fail 显式暴露（MUT-monitoring-clear 后/重启后不自愈，绝不静默 PASS）。",
+   "order_keys": {
+    "path": "$.entries",
+    "by": "ts",
+    "direction": "desc"
+   },
+   "status": 200
+  },
+  {
+   "id": "AD-login-poll-unknown",
+   "method": "GET",
+   "path": "/admin/api/login/poll/nonexistent-flow-xyz",
+   "headers": {
+    "Authorization": "Bearer ${ZCODE_ADMIN_KEY}"
+   },
+   "tags": [
+    "safe",
+    "admin",
+    "read",
+    "negative"
+   ],
+   "expect": "L1+L2+L3",
+   "note": "未知 flow_id → 200 {\"status\":\"expired\"}（契约：幂等、无 404）。零上游。",
+   "status": 200
+  },
+  {
+   "id": "AD-pool-doc-drift",
+   "method": "GET",
+   "path": "/admin/api/pool",
+   "headers": {
+    "Authorization": "Bearer ${ZCODE_ADMIN_KEY}"
+   },
+   "tags": [
+    "safe",
+    "admin",
+    "drift-anchor"
+   ],
+   "expect": "L1+L2+L3",
+   "note": "文档说有 /admin/api/pool，实测 404 {\"detail\":\"Not Found\"}。以运行事实为准锚死。",
+   "status": 404
+  },
+  {
+   "id": "AD-quota-doc-drift",
+   "method": "GET",
+   "path": "/admin/api/quota",
+   "headers": {
+    "Authorization": "Bearer ${ZCODE_ADMIN_KEY}"
+   },
+   "tags": [
+    "safe",
+    "admin",
+    "drift-anchor"
+   ],
+   "expect": "L1+L2+L3",
+   "note": "文档 §额度 说 GET /admin/api/quota，实测 404。锚死 404 形态（FastAPI 默认 detail）。",
+   "status": 404
+  },
+  {
+   "id": "AD-claim-history-drift",
+   "method": "GET",
+   "path": "/admin/api/claim/history",
+   "headers": {
+    "Authorization": "Bearer ${ZCODE_ADMIN_KEY}"
+   },
+   "tags": [
+    "safe",
+    "admin",
+    "drift-anchor"
+   ],
+   "expect": "L1+L2+L3",
+   "note": "文档说存在，实测 404。锚死。",
+   "status": 404
+  },
+  {
+   "id": "AD-noauth-accounts",
+   "method": "GET",
+   "path": "/admin/api/accounts",
+   "tags": [
+    "safe",
+    "admin",
+    "negative"
+   ],
+   "expect": "L1+L2+L3",
+   "note": "缺凭证 → 401 {\"detail\":\"缺少鉴权凭证\"}。中文文案逐字对拍。",
+   "status": 401
+  },
+  {
+   "id": "AD-badkey-accounts",
+   "method": "GET",
+   "path": "/admin/api/accounts",
+   "headers": {
+    "Authorization": "Bearer definitely-not-the-key"
+   },
+   "tags": [
+    "safe",
+    "admin",
+    "negative"
+   ],
+   "expect": "L1+L2+L3",
+   "note": "错凭证 → 401 {\"detail\":\"鉴权凭证无效\"}。与缺凭证文案不同型 → 也是契约。",
+   "status": 401
+  },
+  {
+   "id": "AD-noauth-post",
+   "method": "POST",
+   "path": "/admin/api/login/start",
+   "json": {},
+   "tags": [
+    "safe",
+    "admin",
+    "negative"
+   ],
+   "expect": "L1+L2+L3",
+   "note": "写端点缺 key → 401（鉴权在业务逻辑前，零上游）。黑盒测试 test_admin_key_required 的对拍版本。",
+   "status": 401
+  },
+  {
+   "id": "UI-monitoring-page",
+   "method": "GET",
+   "path": "/admin/monitoring",
+   "tags": [
+    "page",
+    "page-dom",
+    "safe"
+   ],
+   "expect": "L1+ST-DOM",
+   "note": "ADR-006 判据：ST-DOM 必须 PASS；字节级 L3 仅 observed 记录（重写清空血缘，空白/注释/属性序允许漂移）。HTML 页（非 JSON → L2 n/a），空白折叠后字节对拍：静态资源版本号、标题『zcode-hub · 请求监控』都是契约面。",
+   "kind": "html-dom",
+   "status": 200
+  },
+  {
+   "id": "UI-login-page",
+   "method": "GET",
+   "path": "/admin/login",
+   "tags": [
+    "page",
+    "page-dom",
+    "safe"
+   ],
+   "expect": "L1+ST-DOM",
+   "note": "ADR-006 判据：ST-DOM 必须 PASS；字节级 L3 仅 observed 记录（重写清空血缘，空白/注释/属性序允许漂移）。登录页 HTML 字节对拍。",
+   "kind": "html-dom",
+   "status": 200
+  },
+  {
+   "id": "UI-root-redirect",
+   "method": "GET",
+   "path": "/",
+   "tags": [
+    "safe",
+    "page"
+   ],
+   "expect": "L1+L3",
+   "note": "307 且 Location 值参与比对（headers_compared 含 location）。禁 follow：重定向形态本身是契约。",
+   "status": 307
+  },
+  {
+   "id": "UI-admin-redirect",
+   "method": "GET",
+   "path": "/admin",
+   "tags": [
+    "safe",
+    "page"
+   ],
+   "expect": "L1+L3",
+   "note": "/admin → 307。",
+   "status": 307
+  },
+  {
+   "id": "SEQ-readonly-smoke",
+   "method": "GET",
+   "path": "/admin/api/status",
+   "tags": [
+    "safe",
+    "sequence",
+    "read"
+   ],
+   "expect": "L1+L2+L3",
+   "steps": [
+    {
+     "label": "status",
+     "method": "GET",
+     "path": "/admin/api/status",
+     "headers": {
+      "Authorization": "Bearer ${ZCODE_ADMIN_KEY}"
+     },
+     "status": 200
+    },
+    {
+     "label": "models",
+     "method": "GET",
+     "path": "/v1/models",
+     "status": 200
+    },
+    {
+     "label": "accounts",
+     "method": "GET",
+     "path": "/admin/api/accounts",
+     "headers": {
+      "Authorization": "Bearer ${ZCODE_ADMIN_KEY}"
+     },
+     "status": 200
+    }
+   ],
+   "note": "steps 序列机制的只读验证 case（ADR-003 写序列 SEQ-toggle 的基础设施同套）：三步按序双打、逐步对拍、聚合判定。零副作用，进自测。"
+  },
+  {
+   "id": "ERR-unknown-path",
+   "method": "GET",
+   "path": "/definitely/not/a/route",
+   "tags": [
+    "safe",
+    "negative"
+   ],
+   "expect": "L1+L2+L3",
+   "note": "全局 404 形态锚：FastAPI {\"detail\":\"Not Found\"} vs Go http.NotFound 的 text 差异是重灾区，必须逐字节。",
+   "status": 404
+  },
+  {
+   "id": "UP-messages",
+   "method": "POST",
+   "path": "/v1/messages",
+   "json": {
+    "model": "GLM-5.3-Flash",
+    "max_tokens": 8,
+    "messages": [
+     {
+      "role": "user",
+      "content": "hi"
+     }
+    ]
+   },
+   "tags": [
+    "expensive",
+    "upstream",
+    "gateway"
+   ],
+   "expect": "L1",
+   "note": "真实上游生成：产生真实 token 消耗、结果非确定（文本/耗时/命中账号）。默认不跑（--include-tag expensive）。L3 对其不可行——文本已归一化，但 usage 计数依赖真实生成长度，两侧天然不同 → 预期 L1+结构观测。验收『真实账号可用』由黑盒测试与切换检查表 B8 覆盖。"
+  },
+  {
+   "id": "UP-preview",
+   "method": "GET",
+   "path": "/admin/api/claim/preview",
+   "headers": {
+    "Authorization": "Bearer ${ZCODE_ADMIN_KEY}"
+   },
+   "tags": [
+    "expensive",
+    "upstream"
+   ],
+   "expect": "L1",
+   "note": "打真实 billing 上游 + 触发事件上报，响应含轮询账号与上游实时活动数据 → 不做默认对拍；单服务形态由黑盒测试覆盖。"
+  },
+  {
+   "id": "MUT-login-start",
+   "method": "POST",
+   "path": "/admin/api/login/start",
+   "headers": {
+    "Authorization": "Bearer ${ZCODE_ADMIN_KEY}"
+   },
+   "json": {
+    "label": "conformance"
+   },
+   "tags": [
+    "mutating",
+    "upstream"
+   ],
+   "expect": "L1+ASSERT",
+   "note": "创建真实 OAuth flow（上游 init 调用 + 300s 会话）。绝不在 baseline 上跑（会留会话）；仅隔离实例。flow_id 随机已配归一化规则。 t13 扩步：B-12 真 flow 形态用 capture+单侧断言覆盖（两侧 flow_id 各自随机，跨侧 L3 不适用；status 枚举=契约）。",
+   "steps": [
+    {
+     "label": "start",
+     "method": "POST",
+     "path": "/admin/api/login/start",
+     "headers": {
+      "Authorization": "Bearer ${ZCODE_ADMIN_KEY}"
+     },
+     "json": {
+      "label": "conformance"
+     },
+     "capture": {
+      "FLOW": "$.flow_id"
+     },
+     "asserts": [
+      {
+       "path": "$.flow_id",
+       "re": "^[0-9a-f]{16,32}$"
+      },
+      {
+       "path": "$.login_url",
+       "re": "^https?://"
+      }
+     ],
+     "status": 200
+    },
+    {
+     "label": "poll-real-flow",
+     "method": "GET",
+     "path": "/admin/api/login/poll/{{FLOW}}",
+     "headers": {
+      "Authorization": "Bearer ${ZCODE_ADMIN_KEY}"
+     },
+     "asserts": [
+      {
+       "path": "$.status",
+       "in": [
+        "pending",
+        "expired",
+        "success",
+        "not_found"
+       ]
+      }
+     ],
+     "status": 200
+    }
+   ]
+  },
+  {
+   "id": "MUT-monitoring-clear",
+   "method": "POST",
+   "path": "/admin/api/monitoring/clear",
+   "headers": {
+    "Authorization": "Bearer ${ZCODE_ADMIN_KEY}"
+   },
+   "tags": [
+    "mutating"
+   ],
+   "expect": "L1+L2+L3",
+   "note": "清空监控。会毁掉队友正在观察的数据，默认禁跑。"
+  },
+  {
+   "id": "GW-messages-nonobj",
+   "method": "POST",
+   "path": "/v1/messages",
+   "raw_body": "[]",
+   "tags": [
+    "safe",
+    "gateway",
+    "negative",
+    "cr32-anchor"
+   ],
+   "expect": "L1+L3",
+   "note": "契约 CR-32 锚：合法非对象体 → 老服务 **500 text/plain 恰 21 字节**（未捕获异常形态）。candidate 若「好心修成 400」即挂——t8 审计已实测复现（3 形态 []/\"str\"/null 全 500）。零上游。",
+   "status": 500
+  },
+  {
+   "id": "GW-chat-nonobj",
+   "method": "POST",
+   "path": "/v1/chat/completions",
+   "raw_body": "[]",
+   "tags": [
+    "safe",
+    "gateway",
+    "negative",
+    "cr32-anchor"
+   ],
+   "expect": "L1+L2+L3",
+   "note": "CR-32 对照锚：同体在 chat 端点 → 400 形态B {\"请求体必须是 JSON 对象\",\"invalid_request_error\"}。与 GW-messages-nonobj 构成【同输入双端点语义相反】的成对锁定。零上游。",
+   "status": 400
+  },
+  {
+   "id": "GW-messages-badjson",
+   "method": "POST",
+   "path": "/v1/messages",
+   "raw_body": "{bad",
+   "tags": [
+    "safe",
+    "gateway",
+    "negative",
+    "cr01-anchor"
+   ],
+   "expect": "L1+L2+L3",
+   "note": "CR-01 锚：messages 非法 JSON → 400 type=invalid_request（无 _error 后缀）；chat 同场景是 invalid_request_error。两个 type 值不得统一。零上游。",
+   "status": 400
+  },
+  {
+   "id": "UI-accounts-page",
+   "method": "GET",
+   "path": "/admin/accounts",
+   "kind": "html-dom",
+   "tags": [
+    "safe",
+    "page",
+    "page-dom"
+   ],
+   "expect": "L1+ST-DOM",
+   "note": "t9 主战场：baseline 模板口径 43 id / 98 class / 3 data-*；live 属性口径由 ST-DOM 守卫",
+   "status": 200
+  },
+  {
+   "id": "UI-settings-page",
+   "method": "GET",
+   "path": "/admin/settings",
+   "kind": "html-dom",
+   "tags": [
+    "safe",
+    "page",
+    "page-dom"
+   ],
+   "expect": "L1+ST-DOM",
+   "note": "baseline 5 id / 11 class / 1 data-*",
+   "status": 200
+  },
+  {
+   "id": "AD-verify",
+   "method": "GET",
+   "path": "/admin/api/verify",
+   "headers": {
+    "Authorization": "Bearer ${ZCODE_ADMIN_KEY}"
+   },
+   "tags": [
+    "safe",
+    "admin",
+    "read"
+   ],
+   "expect": "L1+L2+L3",
+   "note": "B-01 契约实测 200 {\"status\":\"ok\"} 15B，前端 auth.js verifyKey() 探测面。零副作用。",
+   "status": 200
+  },
+  {
+   "id": "AD-verify-anon",
+   "method": "GET",
+   "path": "/admin/api/verify",
+   "tags": [
+    "safe",
+    "admin",
+    "negative"
+   ],
+   "expect": "L1+L2+L3",
+   "note": "B-01 负型：无凭证 → 401 形态 A（逐字对拍中文 detail）。",
+   "status": 401
+  },
+  {
+   "id": "AD-captcha-config",
+   "method": "GET",
+   "path": "/admin/api/claim/captcha-config",
+   "headers": {
+    "Authorization": "Bearer ${ZCODE_ADMIN_KEY}"
+   },
+   "tags": [
+    "safe",
+    "admin",
+    "read"
+   ],
+   "expect": "L1+L2+L3",
+   "note": "B-15 实测 200 4 键 {enabled,scene_id,region,prefix} 70B（契约值 scene_id=11xygtvd/region=cn/prefix=no8xfe）。region 系动态拉上游 configs——若 candidate 环境同源应同值；FLAKY 红则按实测收紧。零 zcode 配额消耗。",
+   "status": 200
+  },
+  {
+   "id": "AD-export",
+   "method": "GET",
+   "path": "/admin/api/export",
+   "headers": {
+    "Authorization": "Bearer ${ZCODE_ADMIN_KEY}"
+   },
+   "tags": [
+    "safe",
+    "admin",
+    "read"
+   ],
+   "expect": "L1+L2+L3",
+   "note": "B-19 GET 只读。响应含明文 secret（CR-06 最危险端点）→ Sentinel 字段名+形态双道命中自动指纹化，两侧同值同指纹 L3 仍判等，明文零落盘。结构 version/providers{zai,bigmodel}[ExportItem{name,mode,secret}] 逐键对拍。路径陷阱：/admin/api/export 无 accounts 段（CR-06）。",
+   "status": 200
+  },
+  {
+   "id": "AD-delete-unknown",
+   "method": "DELETE",
+   "path": "/admin/api/accounts",
+   "headers": {
+    "Authorization": "Bearer ${ZCODE_ADMIN_KEY}"
+   },
+   "json": [
+    "__liche-no-such-id__"
+   ],
+   "tags": [
+    "safe",
+    "admin",
+    "negative"
+   ],
+   "expect": "L1+L2+L3",
+   "note": "B-04 实测：body 为 id 数组，不存在 id → 200 {\"deleted\":0}，零副作用。路径 CR-04：集合级 DELETE 非 /{id}。",
+   "status": 200
+  },
+  {
+   "id": "AD-put-unknown",
+   "method": "PUT",
+   "path": "/admin/api/accounts/__liche-no-such-id__",
+   "headers": {
+    "Authorization": "Bearer ${ZCODE_ADMIN_KEY}"
+   },
+   "json": {
+    "name": "x"
+   },
+   "tags": [
+    "safe",
+    "admin",
+    "negative"
+   ],
+   "expect": "L1+L2+L3",
+   "note": "B-06 实测：不存在 id → 404 {\"detail\":\"账号不存在\"}。零副作用（未命中账号无写入）。",
+   "status": 404
+  },
+  {
+   "id": "AD-toggle-unknown",
+   "method": "POST",
+   "path": "/admin/api/accounts/__liche-no-such-id__/enabled",
+   "headers": {
+    "Authorization": "Bearer ${ZCODE_ADMIN_KEY}"
+   },
+   "json": {
+    "enabled": false
+   },
+   "tags": [
+    "safe",
+    "admin",
+    "negative"
+   ],
+   "expect": "L1+L2+L3",
+   "note": "B-07 实测：不存在 id → 404 同文（注意：真实假 id 域写成功是另一面，由 lifecycle 覆盖）。",
+   "status": 404
+  },
+  {
+   "id": "AD-rotate-unknown",
+   "method": "POST",
+   "path": "/admin/api/accounts/__liche-no-such-id__/fingerprint/rotate",
+   "headers": {
+    "Authorization": "Bearer ${ZCODE_ADMIN_KEY}"
+   },
+   "tags": [
+    "safe",
+    "admin",
+    "negative"
+   ],
+   "expect": "L1+L2+L3",
+   "note": "B-08 实测：不存在 id → 404。零副作用。成功形态(200 ok+fingerprint)由 lifecycle rotate 步单侧断言覆盖。",
+   "status": 404
+  },
+  {
+   "id": "AD-manualclaim-missing",
+   "method": "POST",
+   "path": "/admin/api/claim/manual",
+   "headers": {
+    "Authorization": "Bearer ${ZCODE_ADMIN_KEY}"
+   },
+   "json": {},
+   "tags": [
+    "safe",
+    "admin",
+    "negative"
+   ],
+   "expect": "L1+L2+L3",
+   "note": "B-16 契约实测：缺 account_id → 400 {\"detail\":\"缺少 account_id\"}——校验层拒绝在验证码逻辑之前，零副作用。t8 报告曾列此项为【刻意未测】：当时无契约实测背书不敢在生产撞验证码；现 B-16 [实测] 已钉死形态，转正为 case。 若本 case 出现超时/验证码副作用迹象=契约该实测失效，立即降 mutating 并报告。",
+   "status": 400
+  },
+  {
+   "id": "AD-import-empty",
+   "method": "POST",
+   "path": "/admin/api/import",
+   "headers": {
+    "Authorization": "Bearer ${ZCODE_ADMIN_KEY}"
+   },
+   "json": {},
+   "tags": [
+    "safe",
+    "admin",
+    "negative"
+   ],
+   "expect": "L1+L2+L3",
+   "note": "B-20 契约实测：{} → 200 {\"count\":0}（空导入零副作用）。若 candidate 把空导入实现成脏写（count≠0/结构变形）当场定罪。",
+   "status": 200
+  },
+  {
+   "id": "MUT-settings-put-empty",
+   "method": "PUT",
+   "path": "/admin/api/settings",
+   "headers": {
+    "Authorization": "Bearer ${ZCODE_ADMIN_KEY}"
+   },
+   "json": {},
+   "tags": [
+    "mutating",
+    "admin"
+   ],
+   "expect": "L1+L2+L3",
+   "note": "B-18 契约实测 {} → 200 {\"ok\":true} 且三字段未被覆盖（保存语义=merge 非 replace）。【判级原则】拒绝层负型探针（404/400/deleted:0/count:0，契约[实测]背书零副作用）留 safe（如 AD-put-unknown 等 8 条先例）；凡【真实执行到持久化写路径】的（哪怕幂等）一律 mutating 门——PUT settings {} 会走 save_settings() 全流程，故入门。隔离实例跑后须复验三字段未变。",
+   "status": 200
+  },
+  {
+   "id": "SEQ-account-lifecycle",
+   "method": "POST",
+   "path": "/admin/api/accounts",
+   "tags": [
+    "mutating",
+    "sequence",
+    "write"
+   ],
+   "expect": "L1+ASSERT",
+   "note": "t13 工作A：写路径 22 端点的【成功形态】以 capture+单侧断言覆盖（两侧各建各删假账号，响应随机量（id 后缀/uuid）跨侧不可比，故 L3 不进 expect=observed）。假凭证 fake-apikey-* → apiKey 模式，不触发 JWT auto-claim（B-03 契约：仅 JWT 调度领取）→ 零上游零配额。步骤顺序即纪律：建→读→停→读→改→读→轮换→删→读确认，末步删除无条件执行（steps 循环不中断）。count 断言兼作残留检测：上次 run 若崩溃留尸，本次 count=0 报红提示清理。｜两侧共用同一 URL 的自比模式下【第二侧 create 会被去重】——正式对拍 baseline≠candidate 是两套库各建一号无此问题；自比验证需 baseline/candidate 不同 URL，或以双 name 变体轮换。本版两侧同 token 同 name ⇒ 同服务两打必然去重，故 lifecycle 的自比预期=第二侧 create 后 ids[0] 仍指向首号？不——首步 count==1 断言在第二侧红。定论：lifecycle 仅在真双服务下执行（captain 验收语境即 t13 后正式对拍）。",
+   "steps": [
+    {
+     "label": "create",
+     "method": "POST",
+     "path": "/admin/api/accounts",
+     "headers": {
+      "Authorization": "Bearer ${ZCODE_ADMIN_KEY}"
+     },
+     "json": {
+      "provider": "zai",
+      "tokens": [
+       "fake-apikey-liche-lc-{{SIDE}}"
+      ],
+      "name": "liche-lc-dummy-{{SIDE}}"
+     },
+     "capture": {
+      "ID": "$.ids[0]"
+     },
+     "asserts": [
+      {
+       "path": "$.count",
+       "eq": 1
+      },
+      {
+       "path": "$.ids[0]",
+       "re": "^liche-lc-dummy-{{SIDE}}-[0-9a-f]{8}$"
+      }
+     ],
+     "status": [
+      200
+     ]
+    },
+    {
+     "label": "read-visible",
+     "method": "GET",
+     "path": "/admin/api/accounts",
+     "headers": {
+      "Authorization": "Bearer ${ZCODE_ADMIN_KEY}"
+     },
+     "asserts": [
+      {
+       "path": "$.accounts",
+       "find_by_id": "{{ID}}",
+       "field": "enabled",
+       "eq": true
+      },
+      {
+       "path": "$.accounts",
+       "find_by_prefix_missing": "liche-lc-dummy-{{OTHER}}",
+       "unless_shared_source": true
+      }
+     ],
+     "status": [
+      200
+     ]
+    },
+    {
+     "label": "toggle-off",
+     "method": "POST",
+     "path": "/admin/api/accounts/{{ID}}/enabled",
+     "headers": {
+      "Authorization": "Bearer ${ZCODE_ADMIN_KEY}"
+     },
+     "json": {
+      "enabled": false
+     },
+     "asserts": [
+      {
+       "path": "$.ok",
+       "eq": true
+      }
+     ],
+     "status": [
+      200
+     ]
+    },
+    {
+     "label": "read-off",
+     "method": "GET",
+     "path": "/admin/api/accounts",
+     "headers": {
+      "Authorization": "Bearer ${ZCODE_ADMIN_KEY}"
+     },
+     "asserts": [
+      {
+       "path": "$.accounts",
+       "find_by_id": "{{ID}}",
+       "field": "enabled",
+       "eq": false
+      },
+      {
+       "path": "$.accounts",
+       "find_by_prefix_missing": "liche-lc-dummy-{{OTHER}}",
+       "unless_shared_source": true
+      }
+     ],
+     "status": [
+      200
+     ]
+    },
+    {
+     "label": "rename",
+     "method": "PUT",
+     "path": "/admin/api/accounts/{{ID}}",
+     "headers": {
+      "Authorization": "Bearer ${ZCODE_ADMIN_KEY}"
+     },
+     "json": {
+      "name": "liche-lc-renamed-{{SIDE}}"
+     },
+     "asserts": [
+      {
+       "path": "$.ok",
+       "eq": true
+      }
+     ],
+     "status": [
+      200
+     ]
+    },
+    {
+     "label": "read-renamed-exists",
+     "method": "GET",
+     "path": "/admin/api/accounts",
+     "headers": {
+      "Authorization": "Bearer ${ZCODE_ADMIN_KEY}"
+     },
+     "asserts": [
+      {
+       "path": "$.accounts",
+       "find_by_id": "{{ID}}",
+       "field": "name",
+       "eq": "liche-lc-renamed-{{SIDE}}"
+      },
+      {
+       "path": "$.accounts",
+       "find_by_prefix_missing": "liche-lc-dummy-{{OTHER}}",
+       "unless_shared_source": true
+      }
+     ],
+     "status": [
+      200
+     ]
+    },
+    {
+     "label": "rotate",
+     "method": "POST",
+     "path": "/admin/api/accounts/{{ID}}/fingerprint/rotate",
+     "headers": {
+      "Authorization": "Bearer ${ZCODE_ADMIN_KEY}"
+     },
+     "asserts": [
+      {
+       "path": "$.ok",
+       "eq": true
+      },
+      {
+       "path": "$.fingerprint",
+       "type": "object"
+      }
+     ],
+     "status": [
+      200
+     ]
+    },
+    {
+     "label": "delete",
+     "method": "DELETE",
+     "path": "/admin/api/accounts",
+     "headers": {
+      "Authorization": "Bearer ${ZCODE_ADMIN_KEY}"
+     },
+     "json": [
+      "{{ID}}"
+     ],
+     "asserts": [
+      {
+       "path": "$.deleted",
+       "eq": 1
+      }
+     ],
+     "status": [
+      200
+     ]
+    },
+    {
+     "label": "read-gone",
+     "method": "GET",
+     "path": "/admin/api/accounts",
+     "headers": {
+      "Authorization": "Bearer ${ZCODE_ADMIN_KEY}"
+     },
+     "asserts": [
+      {
+       "path": "$.accounts",
+       "find_by_id_missing": "{{ID}}"
+      },
+      {
+       "path": "$.accounts",
+       "find_by_prefix_missing": "liche-lc-dummy-{{OTHER}}",
+       "unless_shared_source": true
+      }
+     ],
+     "status": [
+      200
+     ]
+    }
+   ]
+  },
+  {
+   "id": "AD-create-notokens",
+   "method": "POST",
+   "path": "/admin/api/accounts",
+   "headers": {
+    "Authorization": "Bearer ${ZCODE_ADMIN_KEY}"
+   },
+   "json": {},
+   "tags": [
+    "safe",
+    "admin",
+    "negative"
+   ],
+   "status": 400,
+   "expect": "L1+L2+L3",
+   "note": "B-03 契约实测：{} → 400 {\"detail\":\"请输入至少一个 Token / API Key\"}（校验层拒绝，零副作用）。与 lifecycle 正型（建号成功形态）互补。"
+  },
+  {
+   "id": "ST-css-app",
+   "method": "GET",
+   "path": "/static/css/app.css",
+   "tags": [
+    "safe",
+    "static"
+   ],
+   "status": 200,
+   "expect": "L1+L3",
+   "note": "静态资源面首个覆盖（t19）。实测基线 23788B text/css; charset=utf-8（任务书表 23787 为记录偏差，按「以实测为准」原则取实测）。带 etag（stat 族非内容 hash，t9 已证 → 不进 headers 比对）无 cache-control（与页面 no-store 相反，见 static_probe.py）。L3=折叠后 body 等值（跨侧 Go embed 同文件即绿）。"
+  },
+  {
+   "id": "ST-js-auth",
+   "method": "GET",
+   "path": "/static/js/auth.js",
+   "tags": [
+    "safe",
+    "static"
+   ],
+   "status": 200,
+   "expect": "L1+L3",
+   "note": "实测 2701B text/javascript; charset=utf-8（任务书 2700，同 -1 模式：疑测量管道差异，取实测）。auth.js 是页面鉴权的行为核心文件。"
+  },
+  {
+   "id": "ST-js-header",
+   "method": "GET",
+   "path": "/static/js/header.js",
+   "tags": [
+    "safe",
+    "static"
+   ],
+   "status": 200,
+   "expect": "L1+L3",
+   "note": "实测 1274B（任务书 1273）。"
+  },
+  {
+   "id": "ST-js-toast",
+   "method": "GET",
+   "path": "/static/js/toast.js",
+   "tags": [
+    "safe",
+    "static"
+   ],
+   "status": 200,
+   "expect": "L1+L3",
+   "note": "实测 1368B（任务书 1367）。"
+  },
+  {
+   "id": "ST-static-dir-redirect",
+   "method": "GET",
+   "path": "/static",
+   "tags": [
+    "safe",
+    "static"
+   ],
+   "status": 307,
+   "expect": "L1",
+   "note": "307 挂起（禁 follow）。Location 是【绝对 URL 含自身 host:port】（t9 契约修正：/static 系 Starlette Mount 特性=绝对，页面 307 系相对——不对称合法）⇒ 跨对拍两侧 Location 值必不同（端口不同）是【预期差异】，故 expect 只 L1；location diff 由 headers 机制如实记录进 observed。"
+  },
+  {
+   "id": "ST-static-404",
+   "method": "GET",
+   "path": "/static/nonexist.js",
+   "tags": [
+    "safe",
+    "static"
+   ],
+   "status": 404,
+   "expect": "L1+L2+L3",
+   "note": "404 形态 A {\"detail\":\"Not Found\"}（22B JSON）。任务书保守给 L1，我升 L1+L2+L3：body 是 JSON 结构可比、Go t12 已实现「双 404 兜底各归其主」——若 Go 对 static miss 输出非 JSON 或 detail 变形（非「好心换形态」所能豁免），当场定罪。升级理由超出任务书最低要求，无生产副作用。"
+  },
+  {
+   "id": "D-meta",
+   "method": "GET",
+   "path": "/meta",
+   "tags": [
+    "safe",
+    "meta"
+   ],
+   "status": 200,
+   "expect": "L1+L2+L3",
+   "note": "D-01 元数据端点（t20 实现）。实测逐字节 19B {\"version\":\"2.5.3\"} application/json 无 charset；GET-strict（HEAD→405 allow:GET 是实测，页面级 pattern 不加方法前缀防 Go 自动镜像 HEAD）。版本 2.5.3 与静态资源 ?v=2.5.1 的不一致是真实面，照抄。"
+  },
+  {
+   "id": "D-openapi",
+   "method": "GET",
+   "path": "/openapi.json",
+   "tags": [
+    "safe",
+    "meta"
+   ],
+   "status": 200,
+   "expect": "L1+ASSERT",
+   "asserts": [
+    {
+     "path": "$.openapi",
+     "eq": "3.1.0"
+    },
+    {
+     "path": "$.info.title",
+     "eq": "zcode-hub"
+    },
+    {
+     "path": "$.info.version",
+     "eq": "2.5.3"
+    },
+    {
+     "path": "$.paths",
+     "len_eq": 22
+    }
+   ],
+   "note": "D-02（t20 手写 5431B 文档）。captain 裁定不逐字节（FastAPI 生成形不可手写复现）⇒ expect 止 L1+ASSERT：断言层钉可观测契约面（3.1.0/title=zcode-hub/version=2.5.3/paths=22）；L2/L3 跨侧必异进 observed 不判（expect-gated）。Go 若把 title 写成 zhipucode2api，两侧各自跑 ASSERT 当场定罪——这是本 case 的核心价值。"
+  }
+ ]
+}

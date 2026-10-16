@@ -1,0 +1,40 @@
+{
+ "_policy": "已知差异豁免清单。默认【空】—— 一切差异默认报错（FAIL）。每条豁免必须写满五要素：case、path、差异形态（baseline/candidate 的实际值）、why（为什么可接受）、approved_by（谁批准的，非空才生效）。结构级差异（键缺失/类型不同/数组长度）额外需要 covers_structure=true。豁免命中不会消失，会以『审计痕迹』整段出现在 report.md/report.json，供将来质疑对拍结论时逐条辩护。",
+ "_shape_example": {
+  "id": "EX-000",
+  "case": "示例·勿启用",
+  "path": "$.accounts[*].enabled",
+  "why": "示例（不生效）：形态限定字段 baseline/candidate 比类型名，baseline_value/candidate_value 比原值形态，二者可叠加实现精确锚定",
+  "approved_by": "（必须填：批准人身份与场合）"
+ },
+ "entries": [
+  {
+   "id": "ADR-002-enabled-laohao",
+   "case": "*",
+   "path": "$.accounts[*].enabled",
+   "baseline": "str",
+   "candidate": "bool",
+   "baseline_value": "True",
+   "candidate_value": "True",
+   "covers_structure": true,
+   "why": "用户裁定 enabled 字段规范化（不复现脏值）：老服务对账号 laohao-bigmodel-2420b3c2 透传 data JSON 中的字符串 \"True\"（生产库脏数据；表列 enabled 实为 INTEGER 全 1），Go 版按 ADR-002 统一返回布尔 true。规范化只在读语义层、不改库 → 脏值永久驻留，故 case='*'：任意对拍 case 中出现同形态 accounts[*].enabled 漂移均命中本条；形态精确锚定（仅 baseline=str \"True\" 且 candidate=bool True），其他账号其他形态（如 bool→int）不匹配、照常 FAIL。端点覆盖核查（captain 2026-10-15 指令）：/admin/api/status 实测响应仅 providers/gateway_key_set/quota_pool，无 enabled；/admin/api/monitoring entries 实测 15 键（req_id/ts/endpoint/model/stream/preview/account/mode/ok/status/error/t_first/t_total/input_tokens/output_tokens），无 enabled；/admin/api/bundle/export 为 PBKDF2+AES-GCM 加密二进制（盐/IV 随机 → 本身不可字节对拍，其数据等价由 INT-021 导出→清库→导入往返覆盖）；/login/poll 与 /claim/preview 若隔离实测发现透出 data.enabled，届时按同格式补条目并独立批准，不预先扩面。审计链：docs/contract/adr-002-enabled-normalization.md + adr-003-enabled-write-semantics.md",
+   "approved_by": "用户拍板 · captain 转达（AgentTeams t4 · 2026-10-15） · 见 docs/contract/adr-002-enabled-normalization.md"
+  },
+  {
+   "id": "ADR-006-ui-login-page",
+   "case": "UI-login-page",
+   "path": "$body-bytes",
+   "requires_check": "html-dom-equivalence",
+   "why": "ADR-006 选项 C：页面 HTML 重写以清空他人血缘，字节级差异（空白/注释/属性顺序/模板引擎）为【预期差异】；字节 L3 已降级 observed，本条登记契约意图——正式判据是 ST-DOM 结构等价，且 requires_check 保证【结构不过=整体 FAIL，豁免≠放行】",
+   "approved_by": "用户裁定（ADR-006 选项 C，2026-10-15）"
+  },
+  {
+   "id": "ADR-006-ui-monitoring-page",
+   "case": "UI-monitoring-page",
+   "path": "$body-bytes",
+   "requires_check": "html-dom-equivalence",
+   "why": "同上：monitoring 页重写，字节漂移预期；判据转移到 ST-DOM（requires_check 强制）",
+   "approved_by": "用户裁定（ADR-006 选项 C，2026-10-15）"
+  }
+ ]
+}
