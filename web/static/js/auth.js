@@ -2,27 +2,49 @@
 const ADMIN_API = '/admin/api';
 
 const _ENC = new TextEncoder(), _DEC = new TextDecoder();
-const _SECRET = 'z2a-local-kdf-seed';
 const _XOR_P = 'enc:xor:', _AES_P = 'enc:v1:';
+
+/* 本地存储加密的对称口令。
+ * 每次部署在浏览器首次访问时随机生成并持久化，源码中不硬编码任何固定值：
+ * 固定值一旦进入公开仓库，等于公开了本地密文的解密方法。
+ * 声明为 null 表示"尚未生成"，由 _secret() 惰性初始化。 */
+const _SECRET_KEY = '__z2a_kdf_seed';
+let _SECRET = null;
+function _secret(){
+  if(_SECRET !== null)return _SECRET;
+  try{
+    let s=localStorage.getItem(_SECRET_KEY);
+    if(!s){
+      const b=crypto.getRandomValues(new Uint8Array(32));
+      s=_toB64(b);
+      localStorage.setItem(_SECRET_KEY,s);
+    }
+    _SECRET=s;
+  }catch{
+    // localStorage 不可用（隐私模式）：退回进程内随机值，本次会话内自洽。
+    _SECRET=_toB64(crypto.getRandomValues(new Uint8Array(32)));
+  }
+  return _SECRET;
+}
 
 function _toB64(b){let s='';b.forEach(v=>s+=String.fromCharCode(v));return btoa(s);}
 function _fromB64(s){const d=atob(s),a=new Uint8Array(d.length);for(let i=0;i<d.length;i++)a[i]=d.charCodeAt(i);return a;}
 function _xor(d,k){const o=new Uint8Array(d.length);for(let i=0;i<d.length;i++)o[i]=d[i]^k[i%k.length];return o;}
 
 async function _deriveKey(salt){
-  const km=await crypto.subtle.importKey('raw',_ENC.encode(_SECRET),'PBKDF2',false,['deriveKey']);
+  const km=await crypto.subtle.importKey('raw',_ENC.encode(_secret()),'PBKDF2',false,['deriveKey']);
   return crypto.subtle.deriveKey({name:'PBKDF2',salt,iterations:100000,hash:'SHA-256'},km,{name:'AES-GCM',length:256},false,['encrypt','decrypt']);
 }
 async function _encrypt(plain){
   if(!plain)return'';
-  if(!crypto?.subtle)return _XOR_P+_toB64(_xor(_ENC.encode(plain),_ENC.encode(_SECRET)));
+  if(!crypto?.subtle)return _XOR_P+_toB64(_xor(_ENC.encode(plain),_ENC.encode(_secret())));
   const salt=crypto.getRandomValues(new Uint8Array(16)),iv=crypto.getRandomValues(new Uint8Array(12));
   const key=await _deriveKey(salt),ct=await crypto.subtle.encrypt({name:'AES-GCM',iv},key,_ENC.encode(plain));
   return `${_AES_P}${_toB64(salt)}:${_toB64(iv)}:${_toB64(new Uint8Array(ct))}`;
 }
 async function _decrypt(s){
   if(!s)return'';
-  if(s.startsWith(_XOR_P))return _DEC.decode(_xor(_fromB64(s.slice(_XOR_P.length)),_ENC.encode(_SECRET)));
+  if(s.startsWith(_XOR_P))return _DEC.decode(_xor(_fromB64(s.slice(_XOR_P.length)),_ENC.encode(_secret())));
   if(!s.startsWith(_AES_P)||!crypto?.subtle)return'';
   const p=s.split(':');if(p.length!==5)return'';
   const key=await _deriveKey(_fromB64(p[2]));
